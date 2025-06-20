@@ -5,6 +5,7 @@ const SQUARE_SIZE: f32 = OFFSET - 1.;
 use std::fs::File;
 use std::io::{Error, ErrorKind, Write, stdin, stdout};
 
+use macroquad::ui::{hash, root_ui};
 use macroquad::{miniquad::window::quit, prelude::*};
 
 #[repr(u8)]
@@ -28,6 +29,16 @@ impl ETypeFloor {
             _ => ETypeFloor::None,
         }
     }
+
+    fn get_color(&self) -> u32 {
+        match self {
+            ETypeFloor::None => 0x9DB5B2,  // Ash-grey
+            ETypeFloor::Door => 0x19535F,  // Midnight Green
+            ETypeFloor::Floor => 0x0B7A75, // Skobeloff (Cian-ish green)
+            ETypeFloor::Trap => 0x7B2D26,  // Falu red
+            ETypeFloor::Wall => 0xD7C9AA,  // Dun ()
+        }
+    }
 }
 
 impl Into<char> for ETypeFloor {
@@ -43,6 +54,7 @@ struct Cell {
     y: usize,
     type_floor: ETypeFloor,
 }
+
 #[allow(dead_code)]
 impl Cell {
     fn _new(x: usize, y: usize, type_floor: ETypeFloor) -> Self {
@@ -61,6 +73,12 @@ impl Cell {
 #[allow(dead_code)]
 struct MapTools {
     type_floor_selected: ETypeFloor,
+}
+
+impl MapTools {
+    fn change_type_floor_selected(&mut self, t: ETypeFloor) {
+        self.type_floor_selected = t;
+    }
 }
 
 impl Default for MapTools {
@@ -130,6 +148,10 @@ impl<const X: usize, const Y: usize> MapData<X, Y> {
         let _ = self.update_map_file();
     }
 
+    fn update_name(&mut self, name: String) {
+        self.name = name;
+    }
+
     fn format_map(&self) -> String {
         let mut count: i8 = if self.invert_row_origin { 20 } else { 1 };
         let mut formmated_map: String = "".to_owned();
@@ -181,7 +203,7 @@ impl Default for MapData<20, 20> {
 
 // tests
 #[test]
-fn update_map_cell_col_origin_inverted_success() {
+fn update_map_cell_success() {
     let mut md = MapData::default();
 
     md.update_cell(1, 1, ETypeFloor::Floor);
@@ -189,18 +211,19 @@ fn update_map_cell_col_origin_inverted_success() {
     md.update_cell(3, 2, ETypeFloor::Wall);
     md.update_cell(10, 5, ETypeFloor::Trap);
 
-    assert_eq!(md.cells[19][0].type_floor, ETypeFloor::Floor);
-    assert_eq!(md.cells[18][4].type_floor, ETypeFloor::Door);
-    assert_eq!(md.cells[18][2].type_floor, ETypeFloor::Wall);
-    assert_eq!(md.cells[15][9].type_floor, ETypeFloor::Trap);
+    assert_eq!(md.cells[0][0].type_floor, ETypeFloor::Floor);
+    assert_eq!(md.cells[1][4].type_floor, ETypeFloor::Door);
+    assert_eq!(md.cells[1][2].type_floor, ETypeFloor::Wall);
+    assert_eq!(md.cells[4][9].type_floor, ETypeFloor::Trap);
 }
 
 #[macroquad::main(window_conf)]
 async fn main() {
     let mut md = MapData::default();
+    let mut mt = MapTools::default();
     if USE_UI {
         loop {
-            run_ui(&mut md).await;
+            run_ui(&mut md, &mut mt).await;
         }
     } else {
         start_map_terminal(&mut md);
@@ -219,16 +242,25 @@ fn window_conf() -> Conf {
     }
 }
 
-async fn update<const X: usize, const Y: usize>(map: &mut MapData<X, Y>) {
+async fn update<const X: usize, const Y: usize>(map: &mut MapData<X, Y>, map_tools: &mut MapTools) {
     let (_, _, m_x_offset, m_y_offset, _) = mouse_offset(map).await;
     let cell = map.get_cell(m_x_offset - 1, m_y_offset - 1);
 
     if cell.is_ok() {
-        if is_mouse_button_pressed(MouseButton::Left) {
-            map.update_cell(m_x_offset, m_y_offset, ETypeFloor::Floor);
+        if is_mouse_button_down(MouseButton::Left) {
+            map.update_cell(m_x_offset, m_y_offset, map_tools.type_floor_selected);
         } else if is_mouse_button_down(MouseButton::Right) {
             map.update_cell(m_x_offset, m_y_offset, ETypeFloor::None);
         }
+    }
+
+    match get_last_key_pressed() {
+        Some(KeyCode::Key1) => map_tools.change_type_floor_selected(ETypeFloor::Floor),
+        Some(KeyCode::Key2) => map_tools.change_type_floor_selected(ETypeFloor::Door),
+        Some(KeyCode::Key3) => map_tools.change_type_floor_selected(ETypeFloor::Wall),
+        Some(KeyCode::Key4) => map_tools.change_type_floor_selected(ETypeFloor::Trap),
+        Some(KeyCode::E) => map_tools.change_type_floor_selected(ETypeFloor::None),
+        _ => (),
     }
 
     return;
@@ -242,7 +274,7 @@ fn aabb_check_collision(item1: Rect, item2: Rect) -> bool {
         && item1.y + item1.h > item2.y
 }
 
-async fn draw<const X: usize, const Y: usize>(map: &mut MapData<X, Y>) {
+async fn draw<const X: usize, const Y: usize>(map: &mut MapData<X, Y>, mt: &MapTools) {
     clear_background(BLACK);
     for col in map.cells.iter_mut() {
         for cell in col {
@@ -251,17 +283,28 @@ async fn draw<const X: usize, const Y: usize>(map: &mut MapData<X, Y>) {
                 (cell.y as f32) * OFFSET,
                 SQUARE_SIZE,
                 SQUARE_SIZE,
-                if cell.type_floor == ETypeFloor::None {
-                    DARKGREEN
-                } else {
-                    GREEN
-                },
+                Color::from_hex(ETypeFloor::get_color(&cell.type_floor)),
             );
         }
     }
 
     debug_draw_mouse_data(map).await;
+    draw_tools(map, mt).await;
     next_frame().await;
+}
+
+async fn draw_tools<const X: usize, const Y: usize>(map: &mut MapData<X, Y>, mt: &MapTools) {
+    draw_text(
+        &format!("Type floor: {:?}", mt.type_floor_selected),
+        map.map_size_x as f32 * SQUARE_SIZE + 40.,
+        20.,
+        20.,
+        WHITE,
+    );
+
+    root_ui().window(hash!(), vec2(map.map_size_x as f32 * SQUARE_SIZE + 40., 50.), vec2(200., 150.), |ui| {
+        ui.input_text(hash!(), "Filename", &mut map.name);
+    });
 }
 
 async fn debug_draw_mouse_data<const X: usize, const Y: usize>(map: &mut MapData<X, Y>) {
@@ -269,14 +312,14 @@ async fn debug_draw_mouse_data<const X: usize, const Y: usize>(map: &mut MapData
     draw_text(
         &format!("{:.2}/{:.2}", m_x_offset, m_y_offset),
         10.,
-        400.,
+        map.map_size_y as f32 * SQUARE_SIZE + 40.,
         20.,
         WHITE,
     );
     draw_text(
         &format!("{:.2}/{:.2}", mouse_x, mouse_y),
         10.,
-        422.,
+        map.map_size_y as f32 * SQUARE_SIZE + 52.,
         20.,
         WHITE,
     );
@@ -295,9 +338,9 @@ async fn mouse_offset<const X: usize, const Y: usize>(
     (mouse_x, mouse_y, m_x_offset, m_y_offset, mouse_rect)
 }
 
-async fn run_ui<const X: usize, const Y: usize>(map: &mut MapData<X, Y>) {
-    update(map).await;
-    draw(map).await;
+async fn run_ui<const X: usize, const Y: usize>(map: &mut MapData<X, Y>, map_tools: &mut MapTools) {
+    update(map, map_tools).await;
+    draw(map, map_tools).await;
 
     if is_key_pressed(KeyCode::Escape) {
         quit();
