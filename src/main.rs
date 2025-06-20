@@ -1,10 +1,10 @@
+const USE_UI: bool = true;
 const OFFSET: f32 = 20.;
 const SQUARE_SIZE: f32 = OFFSET - 1.;
 
 use std::fs::File;
-use std::io::{Error, ErrorKind, Result, Write, stdin, stdout};
+use std::io::{Error, ErrorKind, Write, stdin, stdout};
 
-use macroquad::prelude::camera::mouse;
 use macroquad::{miniquad::window::quit, prelude::*};
 
 #[repr(u8)]
@@ -126,7 +126,6 @@ impl<const X: usize, const Y: usize> MapData<X, Y> {
             y - 1
         };
 
-        println!("update_cell: {}/{}", x, y);
         self.cells[y][x].update(t);
         let _ = self.update_map_file();
     }
@@ -199,9 +198,12 @@ fn update_map_cell_col_origin_inverted_success() {
 #[macroquad::main(window_conf)]
 async fn main() {
     let mut md = MapData::default();
-    // start_map_terminal(&mut md);
-    loop {
-        run_ui(&mut md).await;
+    if USE_UI {
+        loop {
+            run_ui(&mut md).await;
+        }
+    } else {
+        start_map_terminal(&mut md);
     }
 }
 
@@ -218,7 +220,7 @@ fn window_conf() -> Conf {
 }
 
 async fn update<const X: usize, const Y: usize>(map: &mut MapData<X, Y>) {
-    let (_, _, m_x_offset, m_y_offset, mouse_rect) = mouse_offset(map).await;
+    let (_, _, m_x_offset, m_y_offset, _) = mouse_offset(map).await;
     let cell = map.get_cell(m_x_offset - 1, m_y_offset - 1);
 
     if cell.is_ok() {
@@ -228,35 +230,16 @@ async fn update<const X: usize, const Y: usize>(map: &mut MapData<X, Y>) {
             map.update_cell(m_x_offset, m_y_offset, ETypeFloor::None);
         }
     }
-    // if aabb_check_collision(
-    //     mouse_rect,
-    //     Rect::new(
-    //         map.cells[m_y_offset][m_x_offset].x as f32 * OFFSET,
-    //         map.cells[m_y_offset][m_x_offset].y as f32 * OFFSET,
-    //         SQUARE_SIZE,
-    //         SQUARE_SIZE,
-    //     ),
-    // ) {
-    //     if is_mouse_button_pressed(MouseButton::Left) {
-    //         map.update_cell(m_x_offset, m_y_offset, ETypeFloor::Floor);
-    //     } else if is_mouse_button_down(MouseButton::Right) {
-    //         map.update_cell(m_x_offset, m_y_offset, ETypeFloor::None);
-    //     }
-    // }
 
     return;
 }
 
 #[allow(dead_code)]
 fn aabb_check_collision(item1: Rect, item2: Rect) -> bool {
-    let is_colliding = item1.x < item2.x + item2.w
+    item1.x < item2.x + item2.w
         && item1.x + item1.w > item2.x
         && item1.y < item2.y + item2.h
-        && item1.y + item1.h > item2.y;
-
-    println!("{:?}/{:?}: {}", item1, item2, is_colliding);
-
-    is_colliding
+        && item1.y + item1.h > item2.y
 }
 
 async fn draw<const X: usize, const Y: usize>(map: &mut MapData<X, Y>) {
@@ -303,10 +286,6 @@ async fn mouse_offset<const X: usize, const Y: usize>(
     map: &mut MapData<X, Y>,
 ) -> (f32, f32, usize, usize, Rect) {
     let (mouse_x, mouse_y) = mouse_position();
-    // let (m_x_offset, m_y_offset) = (
-    //     (mouse_x / OFFSET) as usize + if !map.invert_row_origin { 1 } else { 0 },
-    //     (mouse_y / OFFSET) as usize + if !map.invert_col_origin { 1 } else { 0 },
-    // );
     let (m_x_offset, m_y_offset) = (
         ((mouse_x + if !map.invert_row_origin { OFFSET } else { 0. }) / OFFSET) as usize,
         ((mouse_y + if !map.invert_col_origin { OFFSET } else { 0. }) / OFFSET) as usize,
